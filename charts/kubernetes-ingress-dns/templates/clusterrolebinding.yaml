@@ -1,0 +1,14 @@
+{{- if .Values.serviceAccount.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubernetes-ingress-dns.fullname" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubernetes-ingress-dns.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubernetes-ingress-dns.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

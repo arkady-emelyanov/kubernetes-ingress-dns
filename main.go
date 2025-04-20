@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,19 +24,20 @@ import (
 )
 
 var (
-	upstreamDnsDefault = "8.8.8.8:53,4.4.4.4:53"
-	listenPortDefault  = "53"
+	upstreamDnsDefault    = "8.8.8.8:53,4.4.4.4:53"
+	listenDnsPortDefault  = "53"
+	listenHttpPortDefault = "80"
 
-	ingressMap    = make(map[string]string)
+	namespaceFlag      *string = nil
+	kubeconfigFlag     *string = nil
+	upstreamsFlag      *string = nil
+	listenDnsPortFlag  *string = nil
+	listenHttpPortFlag *string = nil
+	debugFlag          *bool   = nil
+
 	upstreamsList []string
-
-	namespaceFlag  *string = nil
-	kubeconfigFlag *string = nil
-	upstreamsFlag  *string = nil
-	listenPortFlag *string = nil
-	debugFlag      *bool   = nil
-
-	log *zap.Logger = nil
+	log           *zap.Logger = nil
+	ingressMap                = make(map[string]string)
 )
 
 func init() {
@@ -48,7 +51,8 @@ func init() {
 
 	namespaceFlag = flag.String("namespace", "", "(optional) watch ingress objects only in the namespace")
 	upstreamsFlag = flag.String("upstreams", upstreamDnsDefault, "(optional) coma-separated host:port list of upstreams")
-	listenPortFlag = flag.String("port", listenPortDefault, "(optional) listen port")
+	listenDnsPortFlag = flag.String("dns-port", listenDnsPortDefault, "(optional) dns interface port")
+	listenHttpPortFlag = flag.String("http-port", listenHttpPortDefault, "(optional) http interface port")
 	flag.Parse()
 
 	if *debugFlag {
@@ -73,6 +77,7 @@ func main() {
 
 	startIngressInformer(stopChan)
 	startDnsServer(stopChan)
+	startHttpServer(stopChan)
 
 	<-exitChan
 	log.Info("Shutting down...")
@@ -80,14 +85,32 @@ func main() {
 	close(stopChan)
 }
 
+func startHttpServer(quitChan <-chan struct{}) error {
+	http.HandleFunc("/", handleHttpRequest)
+	srv := http.Server{
+		Addr: fmt.Sprintf(":%s", *listenHttpPortFlag),
+	}
+	go func() {
+		log.Info("Starting HTTP server...", zap.String("port", *listenHttpPortFlag))
+		if err := srv.ListenAndServe(); err != nil {
+			log.Fatal("Failed to start HTTP server", zap.Error(err))
+		}
+	}()
+	go func() {
+		<-quitChan
+		srv.Shutdown(context.Background())
+	}()
+	return nil
+}
+
 func startDnsServer(quitChan <-chan struct{}) error {
 	dns.HandleFunc(".", handleDnsRequest)
 	srv := &dns.Server{
-		Addr: fmt.Sprintf(":%s", *listenPortFlag),
+		Addr: fmt.Sprintf(":%s", *listenDnsPortFlag),
 		Net:  "udp",
 	}
 	go func() {
-		log.Info("Starting DNS server...", zap.String("port", *listenPortFlag))
+		log.Info("Starting DNS server...", zap.String("port", *listenDnsPortFlag))
 		if err := srv.ListenAndServe(); err != nil {
 			log.Fatal("Failed to start DNS server", zap.Error(err))
 		}
@@ -201,6 +224,12 @@ func updateIngressMap(obj interface{}) {
 		zap.String("namespace", i.Namespace),
 		zap.String("load balancer", ip),
 	)
+}
+
+func handleHttpRequest(w http.ResponseWriter, r *http.Request) {
+	log.Debug("HTTP request", zap.String("uri", r.RequestURI))
+	w.WriteHeader(http.StatusNoContent)
+	w.Write([]byte{})
 }
 
 func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {

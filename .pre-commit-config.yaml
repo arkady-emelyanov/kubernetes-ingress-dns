@@ -3,3 +3,4 @@ repos:
     rev: v0.1.28
     hooks:
       - id: gofmt
+      - id: helmlint

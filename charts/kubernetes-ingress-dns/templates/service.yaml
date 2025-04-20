@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernetes-ingress-dns.fullname" . }}
+  labels:
+    {{- include "kubernetes-ingress-dns.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.dnsPort }}
+      targetPort: dns
+      protocol: UDP
+      name: dns
+    - port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "kubernetes-ingress-dns.selectorLabels" . | nindent 4 }}
