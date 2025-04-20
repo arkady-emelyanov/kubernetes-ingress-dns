@@ -23,16 +23,16 @@ import (
 
 var (
 	upstreamDnsDefault = "8.8.8.8:53,4.4.4.4:53"
-	listenPortDefault = "53"
+	listenPortDefault  = "53"
 
-	ingressMap = make(map[string]string)
+	ingressMap    = make(map[string]string)
 	upstreamsList []string
 
-	namespaceFlag *string = nil
+	namespaceFlag  *string = nil
 	kubeconfigFlag *string = nil
-	upstreamsFlag *string = nil
-	listenPortFlag *string = nil	
-	debugFlag *bool = nil
+	upstreamsFlag  *string = nil
+	listenPortFlag *string = nil
+	debugFlag      *bool   = nil
 
 	log *zap.Logger = nil
 )
@@ -51,10 +51,10 @@ func init() {
 	listenPortFlag = flag.String("port", listenPortDefault, "(optional) listen port")
 	flag.Parse()
 
-	if *debugFlag {		
+	if *debugFlag {
 		log = zap.Must(zap.NewDevelopment())
 		log.Info("Starting development logger")
-	} else {		
+	} else {
 		log = zap.Must(zap.NewProduction())
 		log.Info("Starting production logger")
 	}
@@ -80,12 +80,11 @@ func main() {
 	close(stopChan)
 }
 
-
 func startDnsServer(quitChan <-chan struct{}) error {
 	dns.HandleFunc(".", handleDnsRequest)
 	srv := &dns.Server{
-		Addr: fmt.Sprintf(":%s", *listenPortFlag), 
-		Net: "udp",
+		Addr: fmt.Sprintf(":%s", *listenPortFlag),
+		Net:  "udp",
 	}
 	go func() {
 		log.Info("Starting DNS server...", zap.String("port", *listenPortFlag))
@@ -106,7 +105,7 @@ func startIngressInformer(quitChan <-chan struct{}) error {
 		return err
 	}
 
-	var opts []informers.SharedInformerOption	
+	var opts []informers.SharedInformerOption
 	if *namespaceFlag != "" {
 		opts = append(opts, informers.WithNamespace(*namespaceFlag))
 	}
@@ -117,7 +116,7 @@ func startIngressInformer(quitChan <-chan struct{}) error {
 		AddFunc: func(obj interface{}) {
 			updateIngressMap(obj)
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) { 
+		UpdateFunc: func(oldObj, newObj interface{}) {
 			updateIngressMap(newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -171,8 +170,8 @@ func deleteIngressMap(obj interface{}) {
 	}
 	for _, rule := range i.Spec.Rules {
 		delete(ingressMap, rule.Host)
-		log.Debug("Cleared up host", 
-			zap.String("host", rule.Host), 
+		log.Debug("Cleared up host",
+			zap.String("host", rule.Host),
 		)
 	}
 	log.Debug("Ingress deleted", zap.String("name", i.Name))
@@ -188,18 +187,18 @@ func updateIngressMap(obj interface{}) {
 		log.Debug("no LoadBalancer.Ingress, skipping...", zap.String("name", i.Name))
 		return
 	}
-	
+
 	ip := i.Status.LoadBalancer.Ingress[0].IP
 	for _, rule := range i.Spec.Rules {
 		ingressMap[rule.Host] = ip
-		log.Debug("Host discovered", 
-			zap.String("host", rule.Host), 
+		log.Debug("Host discovered",
+			zap.String("host", rule.Host),
 			zap.String("ip", ip),
 		)
 	}
-	log.Info("Ingress loaded", 
+	log.Info("Ingress loaded",
 		zap.String("name", i.Name),
-		zap.String("namespace", i.Namespace), 
+		zap.String("namespace", i.Namespace),
 		zap.String("load balancer", ip),
 	)
 }
@@ -210,22 +209,22 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	msg.Authoritative = true
 
 	for _, q := range r.Question {
-		log.Debug("New request", 
-			zap.String("type", dns.TypeToString[q.Qtype]), 
+		log.Debug("New request",
+			zap.String("type", dns.TypeToString[q.Qtype]),
 			zap.String("name", q.Name),
 		)
 
 		if q.Qtype == dns.TypeA {
 			host := strings.TrimSuffix(q.Name, ".")
 			if ip, ok := ingressMap[host]; ok {
-				a := &dns.A{					
+				a := &dns.A{
 					Hdr: dns.RR_Header{
-						Name: q.Name,
-						Rrtype: dns.TypeA, 
-						Class: dns.ClassINET,
-						Ttl: 300,
+						Name:   q.Name,
+						Rrtype: dns.TypeA,
+						Class:  dns.ClassINET,
+						Ttl:    300,
 					},
-					A: net.ParseIP(ip),			
+					A: net.ParseIP(ip),
 				}
 				msg.Answer = append(msg.Answer, a)
 				w.WriteMsg(msg)
@@ -235,7 +234,7 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 		if q.Qtype == dns.TypeAAAA {
 			host := strings.TrimSuffix(q.Name, ".")
-			if _, ok := ingressMap[host]; ok {				
+			if _, ok := ingressMap[host]; ok {
 				msg.Answer = nil
 				w.WriteMsg(msg)
 				return
@@ -254,7 +253,7 @@ func forwardDnsRequest(w dns.ResponseWriter, req *dns.Msg) {
 		log.Debug("Communicating to upstream", zap.String("upstream", u))
 		resp, _, err := c.Exchange(req, u)
 		if err != nil {
-			log.Warn("Failed to get response from upstream, skipping...", 
+			log.Warn("Failed to get response from upstream, skipping...",
 				zap.String("upstream", u),
 				zap.Error(err),
 			)
