@@ -21,13 +21,6 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get Next Version
-        id: semver
-        uses: ietf-tools/semver-action@v1
-        with:
-          token: ${{ github.token }}
-          branch: main
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
