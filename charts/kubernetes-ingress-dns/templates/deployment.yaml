@@ -38,10 +38,13 @@ spec:
           {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: 
+            - "-dns-port={{ .Values.service.dnsPort }}"
+            - "-http-port={{ .Values.service.httpPort }}"
+            - "-upstreams={{ .Values.service.upstreams }}"
           ports:
             - name: dns
               containerPort: {{ .Values.service.dnsPort }}
-              hostPort: {{ .Values.service.dnsHostPort }}
               protocol: UDP
             - name: http
               containerPort: {{ .Values.service.httpPort }}

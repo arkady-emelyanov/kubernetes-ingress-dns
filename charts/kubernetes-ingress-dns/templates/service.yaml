@@ -11,6 +11,7 @@ spec:
       targetPort: dns
       protocol: UDP
       name: dns
+      nodePort: {{ .Values.service.nodePort }}
     - port: {{ .Values.service.httpPort }}
       targetPort: http
       protocol: TCP

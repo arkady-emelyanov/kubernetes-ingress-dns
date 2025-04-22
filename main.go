@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/bluele/gcache"
 	"github.com/miekg/dns"
 	"go.uber.org/zap"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -28,6 +30,8 @@ var (
 	listenDnsPortDefault  = "53"
 	listenHttpPortDefault = "80"
 
+	ingressMap = make(map[string]string)
+
 	namespaceFlag      *string = nil
 	kubeconfigFlag     *string = nil
 	upstreamsFlag      *string = nil
@@ -36,11 +40,15 @@ var (
 	debugFlag          *bool   = nil
 
 	upstreamsList []string
-	log           *zap.Logger = nil
-	ingressMap                = make(map[string]string)
+	log           *zap.Logger
+	upstreamCache gcache.Cache
+	dnsClient     *dns.Client
 )
 
 func init() {
+	upstreamCache = gcache.New(1000).Expiration(time.Minute).LRU().Build()
+	dnsClient = new(dns.Client)
+
 	debugFlag = flag.Bool("debug", false, "Enable debug logging")
 	if home := homedir.HomeDir(); home != "" {
 		d := filepath.Join(home, ".kube", "config")
@@ -271,16 +279,28 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	log.Debug("Forwarging the request...")
+	log.Debug("Forwarding request to upstreams..")
 	forwardDnsRequest(w, r)
 }
 
 func forwardDnsRequest(w dns.ResponseWriter, req *dns.Msg) {
-	c := new(dns.Client)
+	q := req.Question[0]
+	cacheKey := q.Name + "_" + dns.TypeToString[q.Qtype]
+	if cached, err := upstreamCache.Get(cacheKey); err == nil {
+		log.Debug("Cache hit", zap.String("cache-key", cacheKey))
+		cachedAnswer := cached.([]dns.RR)
+
+		msg := new(dns.Msg)
+		msg.SetReply(req)
+		msg.Authoritative = true
+		msg.Answer = cachedAnswer
+		w.WriteMsg(msg)
+		return
+	}
 
 	for _, u := range upstreamsList {
 		log.Debug("Communicating to upstream", zap.String("upstream", u))
-		resp, _, err := c.Exchange(req, u)
+		resp, _, err := dnsClient.Exchange(req, u)
 		if err != nil {
 			log.Warn("Failed to get response from upstream, skipping...",
 				zap.String("upstream", u),
@@ -288,6 +308,7 @@ func forwardDnsRequest(w dns.ResponseWriter, req *dns.Msg) {
 			)
 			continue
 		}
+		upstreamCache.Set(cacheKey, resp.Answer)
 		w.WriteMsg(resp)
 		return
 	}
