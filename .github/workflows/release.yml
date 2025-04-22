@@ -29,4 +29,3 @@ jobs:
         uses: ./.github/workflows/build.yml
         with:
           version: ${{ steps.semver.outputs.nextStrict }}
-        secrets: inherit
