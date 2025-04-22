@@ -25,7 +25,7 @@ jobs:
           fallbackTag: "1.0.0"
 
       - name: Build release (if needed)
-        if: ${{ steps.check.outputs.should_build == 'true' }}          
+        if: ${{ steps.semver.outputs.next != steps.semver.outputs.current }}
         uses: ./.github/workflows/build.yml
         with:
           version: ${{ steps.semver.outputs.nextStrict }}
