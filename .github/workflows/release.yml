@@ -39,7 +39,6 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
-      ## update the chart version based on Calculate next version
       - name: Set chart version
         run: |
           sed -i 's/0\.0\.0/${{ steps.semver.outputs.nextStrict }}/g' charts/kubernetes-ingress-dns/Chart.yaml
