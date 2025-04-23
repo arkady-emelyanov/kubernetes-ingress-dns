@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kubernetes Ingress DNS</title>
+</head>
+<body>
+  <h1>Kubernetes Ingress DNS</h1>
+  <p>A dead-simple DNS Server for home labs. Makes MetalLB load balancers and ingresses just work..</p>
+
+  <h2>Helm Chart Installation</h2>
+  <p>To install the chart, run the following:</p>
+  <pre>helm repo add kubernetes-ingress-dns https://arkady-emelyanov.github.io/kubernetes-ingress-dns/
+helm repo update
+helm install ingress-dns kubernetes-ingress-dns/kubernetes-ingress-dns</pre>
+
+  <h2>Application repository</h2>
+  <p>View the source code and documentation on GitHub:</p>
+  <p><a href="https://github.com/arkady-emelyanov/kubernetes-ingress-dns" target="_blank">
+    https://github.com/arkady-emelyanov/kubernetes-ingress-dns
+  </a></p>
+</body>
+</html>
