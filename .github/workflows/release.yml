@@ -35,10 +35,10 @@ jobs:
       - name: Set build
         id: build
         run: |
-          if [ "${{ steps.semver.outputs.current }}" = "${{ steps.semver.outputs.next }}" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ steps.semver.outputs.current }}" = "${{ steps.semver.outputs.nextStrict }}" ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
