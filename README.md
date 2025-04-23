@@ -1,8 +1,12 @@
 # Kubernetes Ingress DNS
 
-A dead-simple DNS Server for home labs. Makes ingresses just work in your LAN!
-It will only respond to the known Ingress hosts, for other domains, it will forward DNS query to one of the configured upstreams.
-It's a good idea to point upstream to the Pi-Hole/AdGuard installation.
+A dead-simple DNS server for home labs.
+<i>Makes ingresses just work on your LAN!</i>
+
+This DNS server only responds to known Ingress hosts. All other domain queries are forwarded to your configured upstream DNS servers.
+
+For best results, it's a good idea to point the upstream to a Pi-hole or AdGuard installation.
+
 
 ## Prerequisites
 
