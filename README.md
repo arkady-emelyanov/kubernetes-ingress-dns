@@ -41,8 +41,13 @@ nslookup -port=30053 httpbin.local <k3s node ip>
 
 ## Using as a LAN-level DNS
 
-Exposing DNS server to the LAN clients could be tricky, NodePort can't bind below 30000. So either `HostNetwork=true`, out-of-cluster deployment, or host level proxy.
-I personally opted in with host level proxy: Nginx. Nginx is a lightweight reverse proxy which can be configured to load balance `:53/udp` port. The Nginx is included in almost all distros, so it shouldn't be a problem to install Nginx on the host system.
+Exposing DNS server to the LAN clients could be tricky: NodePort can't bind below `30000`. 
+
+Deployment ideas: `HostNetwork=true`, out-of-cluster, or host level proxy.
+
+I personally opted in with host level proxy: Nginx, a lightweight reverse proxy which can be configured to load balance `:53/udp` port.
+
+The Nginx is included in almost all distros, so it shouldn't be a problem to install Nginx on the host system.
 
 Below is my minimalistic nginx configuration file:
 ```bash
