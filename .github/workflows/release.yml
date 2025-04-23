@@ -47,3 +47,6 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ needs.release.outputs.version }}
+    secrets:
+      DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}"
+      GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
