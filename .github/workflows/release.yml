@@ -7,6 +7,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.build.outputs.build }}
     permissions:
       contents: write
       packages: write
@@ -23,9 +26,24 @@ jobs:
           noNewCommitBehavior: "current"
           noVersionBumpBehavior: "current"
           fallbackTag: "1.0.0"
+      
+      - name: Set version
+        id: version
+        run: |
+          echo "version=${{ steps.semver.outputs.nextStrict }}" >> "$GITHUB_OUTPUT"
 
-      - name: Build release (if needed)
-        if: ${{ steps.semver.outputs.next != steps.semver.outputs.current }}
-        uses: ./.github/workflows/build.yml
-        with:
-          version: ${{ steps.semver.outputs.nextStrict }}
+      - name: Set build
+        id: build
+        run: |
+          if [ "${{ steps.semver.outputs.current }}" = "${{ steps.semver.outputs.next }}" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: release
+    if: needs.release.outputs.build == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
