@@ -6,10 +6,8 @@ on:
         type: string
 
     secrets:
-      DH_TOKEN:
+      DOCKERHUB_TOKEN:
         required: true        
-      GH_TOKEN:
-        required: true
 
 jobs:
   release:
@@ -22,7 +20,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           username: "${{ vars.DOCKERHUB_USERNAME }}"
-          password: "${{ secrets.DH_TOKEN }}"
+          password: "${{ secrets.DOCKERHUB_TOKEN }}"
 
       - name: Setup git
         run: |
@@ -39,13 +37,14 @@ jobs:
           allowUpdates: true
           draft: false
           makeLatest: true
-          name: "${{ inputs.version }}"
-          token: "${{ secrets.GH_TOKEN }}"
+          name: "v${{ inputs.version }}"
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          tag: "${{ inputs.version }}"
 
       - name: Release chart
         uses: helm/chart-releaser-action@v1.7.0
         env:
-          CR_TOKEN: "${{ secrets.GH_TOKEN }}"
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Build and push
         uses: docker/build-push-action@v6
