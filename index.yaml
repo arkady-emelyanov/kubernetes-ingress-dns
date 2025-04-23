@@ -2,6 +2,16 @@ apiVersion: v1
 entries:
   kubernetes-ingress-dns:
   - apiVersion: v2
+    appVersion: 1.2.0
+    created: "2025-04-23T03:53:48.588202467Z"
+    description: A Helm chart for Kubernetes
+    digest: ad5eb8e0fbad8abd585e9d99c1528475a028d50aa1f647c6123ac7501f6afa64
+    name: kubernetes-ingress-dns
+    type: application
+    urls:
+    - https://github.com/arkady-emelyanov/kubernetes-ingress-dns/releases/download/kubernetes-ingress-dns-1.2.0/kubernetes-ingress-dns-1.2.0.tgz
+    version: 1.2.0
+  - apiVersion: v2
     appVersion: 1.1.2
     created: "2025-04-23T03:08:35.697670373Z"
     description: A Helm chart for Kubernetes
@@ -31,4 +41,4 @@ entries:
     urls:
     - https://github.com/arkady-emelyanov/kubernetes-ingress-dns/releases/download/kubernetes-ingress-dns-1.1.0/kubernetes-ingress-dns-1.1.0.tgz
     version: 1.1.0
-generated: "2025-04-23T03:08:35.697683378Z"
+generated: "2025-04-23T03:53:48.588217865Z"
