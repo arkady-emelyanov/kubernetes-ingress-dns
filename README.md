@@ -1,6 +1,7 @@
 # Kubernetes Ingress DNS
 
 A dead-simple DNS server for home labs.
+
 <i>Makes ingresses just work on your LAN!</i>
 
 This DNS server only responds to known Ingress hosts. All other domain queries are forwarded to your configured upstream DNS servers.
@@ -23,7 +24,7 @@ helm repo update
 helm install --set service.upstreams="4.4.4.4:53,1.1.1.1:53" ingress-dns kubernetes-ingress-dns/kubernetes-ingress-dns
 ```
 
-Setting `service.upstreams` will override the default list of upstreams. It's good idea to forward DNS requests to the Pi-hole/AdGuard DNS.
+Setting `service.upstreams` will override the default list of upstreams.
 
 ## Example service
 
@@ -67,6 +68,10 @@ stream {
   }
 }
 ```
+
+Once Nginx is installed and configured, just point you DHCP server on the router to the IP address of the K3S node.
+
+Now you can expose K3S services to your LAN!
 
 ## Development
 
