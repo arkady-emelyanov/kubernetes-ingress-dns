@@ -42,6 +42,9 @@ spec:
             - "-dns-port={{ .Values.service.dnsPort }}"
             - "-http-port={{ .Values.service.httpPort }}"
             - "-upstreams={{ .Values.service.upstreams }}"
+          {{- if .Values.debug }}
+            - "-debug"
+          {{- end }}
           ports:
             - name: dns
               containerPort: {{ .Values.service.dnsPort }}

@@ -1,8 +1,6 @@
 # Kubernetes Ingress DNS
 
-The dead simple DNS server which is Kubernetes Ingress resource aware.
-Built for home lab which uses MetalLB for exposing services.
-
+A dead-simple DNS Server for home labs. Makes MetalLB load balancers and ingresses just work..
 
 ## Development
 
