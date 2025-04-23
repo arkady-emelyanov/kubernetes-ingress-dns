@@ -45,10 +45,12 @@ securityContext: {}
   # runAsUser: 1000
 
 service:
-  type: ClusterIP
-  dnsPort: 53  
-  httpPort: 80
-  nodePort: ~
+  type: NodePort
+  nodePort: 30053
+  dnsPort: 53
+  httpPort: 80  
+  
+  # Provide coma-separated list of upstreams to forward the request to:
   upstreams: "8.8.8.8:53,4.4.4.4:53"
 
 resources: {}
