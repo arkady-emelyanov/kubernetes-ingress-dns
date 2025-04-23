@@ -48,5 +48,4 @@ jobs:
     with:
       version: ${{ needs.release.outputs.version }}
     secrets:
-      DH_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}"
-      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}"
