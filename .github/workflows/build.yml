@@ -5,6 +5,12 @@ on:
         required: true
         type: string
 
+    secrets:
+      DOCKERHUB_TOKEN:
+        required: true        
+      GITHUB_TOKEN:
+        required: true
+
 jobs:
   release:
     runs-on: ubuntu-latest
