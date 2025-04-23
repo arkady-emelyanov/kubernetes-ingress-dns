@@ -47,6 +47,8 @@ jobs:
 
       - name: Release chart
         uses: helm/chart-releaser-action@v1.7.0
+        with:
+          mark_as_latest: false
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
