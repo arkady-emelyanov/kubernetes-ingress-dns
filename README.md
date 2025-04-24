@@ -26,6 +26,11 @@ helm install --set service.upstreams="4.4.4.4:53,1.1.1.1:53" ingress-dns kuberne
 
 Setting `service.upstreams` will override the default list of upstreams.
 
+DNS Server supports following upstream types:
+* `tcp://host:port` - for tcp-based upstreams
+* `upd://host:port` - for udp-based upstreams
+* `host:port` - default, maps to udp
+
 ## Example service
 
 Install httpbin:
