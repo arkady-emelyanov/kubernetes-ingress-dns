@@ -42,12 +42,15 @@ var (
 	upstreamsList []string
 	log           *zap.Logger
 	upstreamCache gcache.Cache
-	dnsClient     *dns.Client
+
+	dnsUdpClient *dns.Client
+	dnsTcpClient *dns.Client
 )
 
 func init() {
 	upstreamCache = gcache.New(1000).Expiration(time.Minute).LRU().Build()
-	dnsClient = new(dns.Client)
+	dnsUdpClient = &dns.Client{}
+	dnsTcpClient = &dns.Client{Net: "tcp"}
 
 	debugFlag = flag.Bool("debug", false, "Enable debug logging")
 	if home := homedir.HomeDir(); home != "" {
@@ -58,7 +61,7 @@ func init() {
 	}
 
 	namespaceFlag = flag.String("namespace", "", "(optional) watch ingress objects only in the namespace")
-	upstreamsFlag = flag.String("upstreams", upstreamDnsDefault, "(optional) coma-separated host:port list of upstreams")
+	upstreamsFlag = flag.String("upstreams", upstreamDnsDefault, "(optional) coma-separated [type://]host:port list of upstreams")
 	listenDnsPortFlag = flag.String("dns-port", listenDnsPortDefault, "(optional) dns interface port")
 	listenHttpPortFlag = flag.String("http-port", listenHttpPortDefault, "(optional) http interface port")
 	flag.Parse()
@@ -246,9 +249,9 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	msg.Authoritative = true
 
 	for _, q := range r.Question {
-		log.Debug("New request",
-			zap.String("type", dns.TypeToString[q.Qtype]),
+		log.Debug("Question",
 			zap.String("name", q.Name),
+			zap.String("type", dns.TypeToString[q.Qtype]),
 		)
 
 		if q.Qtype == dns.TypeA {
@@ -279,40 +282,85 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	log.Debug("Forwarding request to upstreams..")
+	log.Debug("Not an Ingress host",
+		zap.String("host", r.Question[0].Name),
+	)
 	forwardDnsRequest(w, r)
 }
 
-func forwardDnsRequest(w dns.ResponseWriter, req *dns.Msg) {
-	q := req.Question[0]
+func forwardDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
+	q := r.Question[0]
 	cacheKey := q.Name + "_" + dns.TypeToString[q.Qtype]
 	if cached, err := upstreamCache.Get(cacheKey); err == nil {
 		log.Debug("Cache hit", zap.String("cache-key", cacheKey))
-		cachedAnswer := cached.([]dns.RR)
 
 		msg := new(dns.Msg)
-		msg.SetReply(req)
+		msg.SetReply(r)
 		msg.Authoritative = true
-		msg.Answer = cachedAnswer
+
+		cachedAnswerList := cached.([]dns.RR)
+		msg.Answer = cachedAnswerList
 		w.WriteMsg(msg)
 		return
 	}
 
 	for _, u := range upstreamsList {
-		log.Debug("Communicating to upstream", zap.String("upstream", u))
-		resp, _, err := dnsClient.Exchange(req, u)
-		if err != nil {
-			log.Warn("Failed to get response from upstream, skipping...",
+		var resp *dns.Msg
+		var err error
+		var rrt time.Duration
+
+		log.Debug("Calling upstream",
+			zap.String("upstream", u),
+			zap.String("question", r.Question[0].String()),
+		)
+
+		switch true {
+		case strings.HasPrefix(u, "udp://") || strings.Index(u, "://") <= 0:
+			h := strings.TrimPrefix(strings.TrimPrefix(u, "udp://"), "://")
+			resp, rrt, err = dnsUdpClient.Exchange(r, h)
+		case strings.HasPrefix(u, "tcp://"):
+			h := strings.TrimPrefix(u, "tcp://")
+			resp, rrt, err = dnsTcpClient.Exchange(r, h)
+		default:
+			resp = nil
+		}
+
+		if resp == nil {
+			log.Error("Unknown upstream format",
 				zap.String("upstream", u),
 				zap.Error(err),
 			)
 			continue
+		}
+
+		q := strings.Replace(r.Question[0].String(), "\t", " ", -1)
+		if err != nil {
+			log.Warn("Upstream exchange failure",
+				zap.String("upstream", u),
+				zap.String("question", q),
+				zap.Duration("rrt", rrt),
+				zap.Error(err),
+			)
+			continue
+		}
+		if len(resp.Answer) > 0 {
+			a := strings.Replace(resp.Answer[0].String(), "\t", " ", -1)
+			log.Debug("Upstream response received",
+				zap.String("upstream", u),
+				zap.String("question", q),
+				zap.String("answer", a),
+			)
+		} else {
+			log.Debug("Upstream response is empty",
+				zap.String("upstream", u),
+				zap.String("question", q),
+			)
 		}
 		upstreamCache.Set(cacheKey, resp.Answer)
 		w.WriteMsg(resp)
 		return
 	}
 
-	log.Warn("No more upstreams, faling request")
-	dns.HandleFailed(w, req)
+	log.Warn("All upstreams are dead")
+	dns.HandleFailed(w, r)
 }
