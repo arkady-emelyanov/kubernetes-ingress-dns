@@ -26,6 +26,9 @@ helm install --set service.upstreams="4.4.4.4:53,1.1.1.1:53" ingress-dns kuberne
 
 Setting `service.upstreams` will override the default list of upstreams.
 
+Alternative method of installation is to download pre-compiled binaries from the
+[latest release page](https://github.com/arkady-emelyanov/kubernetes-ingress-dns/releases/latest).
+
 DNS Server supports following upstream types:
 * `tcp://host:port` - for tcp-based upstreams
 * `upd://host:port` - for udp-based upstreams
@@ -51,10 +54,7 @@ Exposing DNS server to the LAN clients could be tricky: NodePort can't bind belo
 
 Deployment ideas: `HostNetwork=true`, out-of-cluster, or host level proxy.
 
-I personally opted in with out-of-cluster deployment.
-Just make sure root user is able to access the Kubernetes cluster.
-
-Sample systemd unit:
+Sample systemd unit for out-of-cluster deployment:
 ```
 [Unit]
 Description=Kubernetes Ingress DNS
