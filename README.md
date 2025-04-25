@@ -51,32 +51,26 @@ Exposing DNS server to the LAN clients could be tricky: NodePort can't bind belo
 
 Deployment ideas: `HostNetwork=true`, out-of-cluster, or host level proxy.
 
-I personally opted in with host level proxy: Nginx, a lightweight reverse proxy which can be configured to load balance `:53/udp` port.
+I personally opted in with out-of-cluster deployment.
+Just make sure root user is able to access the Kubernetes cluster.
 
-The Nginx is included in almost all distros, so it shouldn't be a problem to install Nginx on the host system.
+Sample systemd unit:
+```
+[Unit]
+Description=Kubernetes Ingress DNS
+After=network.target
+Wants=network.target
 
-Below is my minimalistic nginx configuration file:
-```bash
-$ cat /etc/nginx/nginx.conf
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kubernetes-ingress-dns -upstreams "8.8.8.8:53,4.4.4.4:53" -dns-port=53 -http-port=8053
+Restart=on-failure
+User=root
 
-worker_processes  4;
-events {
-  worker_connections  4096;
-}
-stream {
-  upstream dns_server {
-    server 127.0.0.1:30053;
-  }
-  server {
-    listen 53 udp;
-    proxy_pass dns_server;
-  }
-}
+[Install]
+WantedBy=multi-user.target
 ```
 
-Once Nginx is installed and configured, just point you DHCP server on the router to the IP address of the K3S node.
-
-Now you can expose K3S services to your LAN!
 
 ## Development
 
