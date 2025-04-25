@@ -49,9 +49,10 @@ jobs:
       - name: prepare release
         run: |
           mkdir -p release
-          for f in kubernetes-ingress-dns-*; do
-            tar -czf release/$f.tar.gz $f
-            sha256sum release/$f.tar.gz > release/$f.tar.gz.sha256
+          cd release
+          for f in ../kubernetes-ingress-dns-*; do
+            tar -czf $f.tar.gz $f
+            sha256sum $f.tar.gz > $f.tar.gz.sha256            
           done
 
       - name: Create Release
