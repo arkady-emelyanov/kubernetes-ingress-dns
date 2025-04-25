@@ -48,17 +48,10 @@ jobs:
       
       - name: prepare release
         run: |
-          mkdir -p release
-          # generate releases
-          for f in ./kubernetes-ingress-dns-*; do
+          for f in kubernetes-ingress-dns-*; do
             tar -czf $f.tar.gz $f
-          done
-          # generate checksums
-          cd release
-          for f in ./kubernetes-ingress-dns-*; do
             sha256sum $f.tar.gz > $f.tar.gz.sha256
           done
-
 
       - name: Create Release
         uses: ncipollo/release-action@v1.12.0
@@ -69,7 +62,7 @@ jobs:
           name: "v${{ inputs.version }}"
           token: "${{ secrets.GITHUB_TOKEN }}"
           tag: "${{ inputs.version }}"
-          artifacts: "release/*"
+          artifacts: "*.tar.gz,*.tar.gz.sha256"
 
       - name: Set chart version
         run: |
