@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bluele/gcache"
 	"github.com/miekg/dns"
 	"go.uber.org/zap"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -41,14 +40,12 @@ var (
 
 	upstreamsList []string
 	log           *zap.Logger
-	upstreamCache gcache.Cache
 
 	dnsUdpClient *dns.Client
 	dnsTcpClient *dns.Client
 )
 
 func init() {
-	upstreamCache = gcache.New(1000).Expiration(time.Minute).LRU().Build()
 	dnsUdpClient = &dns.Client{}
 	dnsTcpClient = &dns.Client{Net: "tcp"}
 
@@ -289,21 +286,6 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func forwardDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
-	q := r.Question[0]
-	cacheKey := q.Name + "_" + dns.TypeToString[q.Qtype]
-	if cached, err := upstreamCache.Get(cacheKey); err == nil {
-		log.Debug("Cache hit", zap.String("cache-key", cacheKey))
-
-		msg := new(dns.Msg)
-		msg.SetReply(r)
-		msg.Authoritative = true
-
-		cachedAnswerList := cached.([]dns.RR)
-		msg.Answer = cachedAnswerList
-		w.WriteMsg(msg)
-		return
-	}
-
 	for _, u := range upstreamsList {
 		var resp *dns.Msg
 		var err error
@@ -356,7 +338,6 @@ func forwardDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 				zap.String("question", q),
 			)
 		}
-		upstreamCache.Set(cacheKey, resp.Answer)
 		w.WriteMsg(resp)
 		return
 	}
