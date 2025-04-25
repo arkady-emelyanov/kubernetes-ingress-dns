@@ -304,15 +304,12 @@ func forwardDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 			h := strings.TrimPrefix(u, "tcp://")
 			resp, rrt, err = dnsTcpClient.Exchange(r, h)
 		default:
-			resp = nil
-		}
-
-		if resp == nil {
 			log.Error("Unknown upstream format",
+				zap.String("question", r.Question[0].String()),
 				zap.String("upstream", u),
-				zap.Error(err),
 			)
-			continue
+			err = fmt.Errorf("unable to parse upstream: '%s'", u)
+			resp = nil
 		}
 
 		q := strings.Replace(r.Question[0].String(), "\t", " ", -1)
@@ -342,6 +339,8 @@ func forwardDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	log.Warn("All upstreams are dead")
-	dns.HandleFailed(w, r)
+	log.Warn("All upstreams are dead, failing the request")
+	m := &dns.Msg{}
+	m.SetReply(r).SetRcode(r, dns.RcodeServerFailure)
+	w.WriteMsg(m)
 }
