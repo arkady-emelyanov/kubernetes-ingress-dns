@@ -10,12 +10,18 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
 	"go.uber.org/zap"
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,19 +33,23 @@ import (
 var (
 	upstreamDnsDefault    = "8.8.8.8:53,4.4.4.4:53"
 	listenDnsPortDefault  = "53"
-	listenHttpPortDefault = "80"
+	listenHttpPortDisable = "-1"
 
 	ingressMap = make(map[string]string)
+	gatewayMap = make(map[string]string)
 
-	namespaceFlag      *string = nil
-	kubeconfigFlag     *string = nil
-	upstreamsFlag      *string = nil
-	listenDnsPortFlag  *string = nil
-	listenHttpPortFlag *string = nil
-	debugFlag          *bool   = nil
+	namespaceFlag        *string = nil
+	kubeconfigFlag       *string = nil
+	upstreamsFlag        *string = nil
+	listenDnsPortFlag    *string = nil
+	listenHttpPortFlag   *string = nil
+	debugFlag            *bool   = nil
+	enableGatewayApiFlag *bool   = nil
 
 	upstreamsList []string
 	log           *zap.Logger
+
+	mapMutateLock sync.Mutex
 
 	dnsUdpClient *dns.Client
 	dnsTcpClient *dns.Client
@@ -60,7 +70,8 @@ func init() {
 	namespaceFlag = flag.String("namespace", "", "(optional) watch ingress objects only in the namespace")
 	upstreamsFlag = flag.String("upstreams", upstreamDnsDefault, "(optional) coma-separated [type://]host:port list of upstreams")
 	listenDnsPortFlag = flag.String("dns-port", listenDnsPortDefault, "(optional) dns interface port")
-	listenHttpPortFlag = flag.String("http-port", listenHttpPortDefault, "(optional) http interface port")
+	listenHttpPortFlag = flag.String("http-port", listenHttpPortDisable, "(optional) http interface port, disabled by default")
+	enableGatewayApiFlag = flag.Bool("enable-gateway-api", false, "(optional) enable Gateway API support")
 	flag.Parse()
 
 	if *debugFlag {
@@ -83,9 +94,26 @@ func main() {
 	exitChan := make(chan os.Signal, 1)
 	signal.Notify(exitChan, syscall.SIGINT, syscall.SIGTERM)
 
-	startIngressInformer(stopChan)
-	startDnsServer(stopChan)
-	startHttpServer(stopChan)
+	if err := startIngressInformer(stopChan); err != nil {
+		log.Error("Failed to start ingress informer, exiting...", zap.Error(err))
+		os.Exit(1)
+	}
+	if err := startGatewayInformer(stopChan); err != nil {
+		log.Error("Failed to start Gateway informer, exiting...", zap.Error(err))
+		os.Exit(1)
+	}
+	if err := startHttpRouteInformer(stopChan); err != nil {
+		log.Error("Failed to start HttpRoute informer, exiting...", zap.Error(err))
+		os.Exit(1)
+	}
+	if err := startDnsServer(stopChan); err != nil {
+		log.Error("Failed to start DNS server, exiting...", zap.Error(err))
+		os.Exit(1)
+	}
+	if err := startHttpServer(stopChan); err != nil {
+		log.Error("Failed to start HTTP server, exiting...", zap.Error(err))
+		os.Exit(1)
+	}
 
 	<-exitChan
 	log.Info("Shutting down...")
@@ -93,7 +121,20 @@ func main() {
 	close(stopChan)
 }
 
+func lock() {
+	mapMutateLock.Lock()
+}
+
+func unlock() {
+	mapMutateLock.Unlock()
+}
+
 func startHttpServer(quitChan <-chan struct{}) error {
+	if *listenHttpPortFlag == listenHttpPortDisable {
+		log.Debug("Port is disabled, skipping the HTTP server...")
+		return nil
+	}
+
 	http.HandleFunc("/", handleHttpRequest)
 	srv := http.Server{
 		Addr: fmt.Sprintf(":%s", *listenHttpPortFlag),
@@ -131,9 +172,9 @@ func startDnsServer(quitChan <-chan struct{}) error {
 }
 
 func startIngressInformer(quitChan <-chan struct{}) error {
-	clientset, err := getClientset()
+	client, err := getStaticClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get kubernetes client")
 	}
 
 	var opts []informers.SharedInformerOption
@@ -141,17 +182,17 @@ func startIngressInformer(quitChan <-chan struct{}) error {
 		opts = append(opts, informers.WithNamespace(*namespaceFlag))
 	}
 
-	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 0, opts...)
+	factory := informers.NewSharedInformerFactoryWithOptions(client, 0, opts...)
 	informer := factory.Networking().V1().Ingresses().Informer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			updateIngressMap(obj)
+			updateIngressResource(obj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			updateIngressMap(newObj)
+			updateIngressResource(newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
-			deleteIngressMap(obj)
+			deleteIngressResource(obj)
 		},
 	})
 
@@ -161,54 +202,351 @@ func startIngressInformer(quitChan <-chan struct{}) error {
 	}()
 
 	if !cache.WaitForCacheSync(quitChan, informer.HasSynced) {
-		log.Error("Failed to sync informer cache")
-		return err
+		return fmt.Errorf("failed to sync ingress informer cache")
 	}
 	return nil
 }
 
-func getClientset() (*kubernetes.Clientset, error) {
-	var config *rest.Config
-	var err error
+func startGatewayInformer(quitChan <-chan struct{}) error {
+	if !*enableGatewayApiFlag {
+		log.Debug("Gateway API disabled, skipping the Gateway informer...")
+		return nil
+	}
 
-	config, err = rest.InClusterConfig()
+	client, err := getDynamicClient()
 	if err != nil {
-		log.Info("In-cluster config failed", zap.Error(err))
+		log.Error("Failed to create dynamic client", zap.Error(err))
+		return err
+	}
+	namespace := metav1.NamespaceAll
+	if *namespaceFlag != "" {
+		namespace = *namespaceFlag
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "gateway.networking.k8s.io",
+		Version:  "v1",
+		Resource: "gateways",
+	}
+
+	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, 0, namespace, nil)
+	informer := factory.ForResource(gvr).Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			updateGatewayResource(obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			updateGatewayResource(newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			deleteGatewayResource(obj)
+		},
+	})
+
+	go func() {
+		log.Info("Starting Gateway informer...")
+		informer.Run(quitChan)
+	}()
+	if !cache.WaitForCacheSync(quitChan, informer.HasSynced) {
+		return fmt.Errorf("failed to sync gateway informer cache")
+	}
+	return nil
+}
+
+func startHttpRouteInformer(quitChan <-chan struct{}) error {
+	if !*enableGatewayApiFlag {
+		log.Debug("Gateway API disabled, skipping the HttpRoute informer...")
+		return nil
+	}
+
+	client, err := getDynamicClient()
+	if err != nil {
+		log.Error("Failed to create dynamic client", zap.Error(err))
+		return err
+	}
+	namespace := metav1.NamespaceAll
+	if *namespaceFlag != "" {
+		namespace = *namespaceFlag
+	}
+	gvr := schema.GroupVersionResource{
+		Group:    "gateway.networking.k8s.io",
+		Version:  "v1",
+		Resource: "httproutes", // note: plural name of the CRD
+	}
+
+	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, 0, namespace, nil)
+	informer := factory.ForResource(gvr).Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			updateHttpRouteResource(obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			updateHttpRouteResource(newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			deleteHttpRouteResource(obj)
+		},
+	})
+
+	go func() {
+		log.Info("Starting HttpRoute informer...")
+		informer.Run(quitChan)
+	}()
+	if !cache.WaitForCacheSync(quitChan, informer.HasSynced) {
+		return fmt.Errorf("failed to sync httproute informer cache")
+	}
+	return nil
+}
+
+func getConfig() (*rest.Config, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Info("In-cluster config not found, trying kubeconfig...",
+			zap.String("kubeconfig", *kubeconfigFlag),
+			zap.Error(err),
+		)
 		config, err = clientcmd.BuildConfigFromFlags("", *kubeconfigFlag)
 		if err != nil {
 			log.Error("Failed load Kubernetes config", zap.Error(err))
 			return nil, err
 		}
 	}
+	return config, err
+}
 
-	clientset, err := kubernetes.NewForConfig(config)
+func getStaticClient() (*kubernetes.Clientset, error) {
+	config, err := getConfig()
+	if err != nil {
+		log.Error("Error loading Kubernetes config", zap.Error(err))
+		return nil, err
+	}
+	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Error("Error creating Kubernetes client", zap.Error(err))
 		return nil, err
 	}
-	return clientset, nil
+	return client, nil
 }
 
-func deleteIngressMap(obj interface{}) {
-	i, ok := obj.(*networkingv1.Ingress)
+func getDynamicClient() (*dynamic.DynamicClient, error) {
+	config, err := getConfig()
+	if err != nil {
+		log.Error("Error loading Kubernetes config", zap.Error(err))
+		return nil, err
+	}
+
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		log.Error("Error creating Kubernetes client", zap.Error(err))
+		return nil, err
+	}
+	return client, nil
+}
+
+func formatGatewayKey(name, namespace, kind string) string {
+	return strings.ToLower(fmt.Sprintf("name:%s,namespace:%s,kind:%s", name, namespace, kind))
+}
+
+func deleteGatewayResource(obj interface{}) {
+	i, ok := obj.(*unstructured.Unstructured)
 	if !ok {
-		log.Debug("failed to cast to Ingress, skipping...")
+		log.Debug("Failed to cast to Unstructured, skipping...")
 		return
 	}
-	if len(i.Status.LoadBalancer.Ingress) == 0 {
-		log.Debug("no LoadBalancer.Ingress, skipping...", zap.String("name", i.Name))
+	key := formatGatewayKey(i.GetName(), i.GetNamespace(), i.GetKind())
+	delete(gatewayMap, key)
+
+	log.Info("Gateway deleted",
+		zap.String("name", i.GetName()),
+		zap.String("namespace", i.GetNamespace()),
+	)
+}
+
+func updateGatewayResource(obj interface{}) {
+	i, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		log.Debug("Failed to cast to Unstructured, skipping...")
 		return
 	}
-	for _, rule := range i.Spec.Rules {
-		delete(ingressMap, rule.Host)
-		log.Debug("Cleared up host",
-			zap.String("host", rule.Host),
+
+	addressesSlice, found, err := unstructured.NestedSlice(i.Object, "status", "addresses")
+	if err != nil {
+		log.Error("Error reading status.addresses",
+			zap.Error(err),
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return
+	}
+	if !found {
+		log.Error("No addresses found for Gateway",
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return
+	}
+
+	ip := ""
+	for _, addr := range addressesSlice {
+		a, ok := addr.(map[string]interface{})
+		if !ok {
+			log.Warn("Unable to convert addressesSlice into map[string]interface{}",
+				zap.String("name", i.GetName()),
+				zap.String("namespace", i.GetNamespace()),
+			)
+		}
+
+		typ := a["type"]
+		val := a["value"]
+		if typ == "IPAddress" {
+			ip = val.(string)
+			break
+		}
+	}
+
+	if ip == "" {
+		log.Warn("No IPAddress found",
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return
+	}
+
+	key := formatGatewayKey(i.GetName(), i.GetNamespace(), i.GetKind())
+	gatewayMap[key] = ip
+
+	log.Info("Gateway discovered",
+		zap.String("name", i.GetName()),
+		zap.String("namespace", i.GetNamespace()),
+		zap.String("key", key),
+		zap.String("ip", ip),
+	)
+}
+
+func getHttpRouteHostnamesAndGateways(i *unstructured.Unstructured) ([]string, []string, error) {
+	hostnames, found, err := unstructured.NestedStringSlice(i.Object, "spec", "hostnames")
+	if err != nil {
+		log.Error("Error reading spec.hostnames",
+			zap.Error(err),
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return nil, nil, fmt.Errorf("error reading spec.hostnames")
+	}
+	if !found {
+		log.Error("No hostnames found for HttpRoute",
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return nil, nil, fmt.Errorf("no hostnames found for HttpRoute")
+	}
+	parentRefsSlice, found, err := unstructured.NestedSlice(i.Object, "spec", "parentRefs")
+	if err != nil {
+		log.Error("Error reading spec.parentRefs",
+			zap.Error(err),
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return hostnames, nil, fmt.Errorf("error reading spec.parentRefs")
+	}
+	if !found {
+		log.Error("no parentRefs found for HttpRoute",
+			zap.String("name", i.GetName()),
+			zap.String("namespace", i.GetNamespace()),
+		)
+		return hostnames, nil, fmt.Errorf("No parentRefs found for HttpRoute")
+	}
+
+	var gatewayKeys []string
+	for _, p := range parentRefsSlice {
+		v, ok := p.(map[string]interface{})
+		if !ok {
+			log.Warn("Unable to convert parentRefSlice into map[string]string",
+				zap.String("name", i.GetName()),
+				zap.String("namespace", i.GetNamespace()),
+			)
+		}
+
+		gwName := v["name"].(string)
+		gwNamespace := v["namespace"].(string)
+		gwKind := v["kind"].(string)
+
+		if gwKind != "Gateway" {
+			log.Warn("Unsupported parentRef kind, skipping...",
+				zap.String("httproute-name", i.GetName()),
+				zap.String("httproute-namespace", i.GetNamespace()),
+				zap.String("kind", gwKind),
+				zap.String("gateway-name", gwName),
+				zap.String("gateway-namespace", gwNamespace),
+			)
+			continue
+		}
+
+		key := formatGatewayKey(gwName, gwNamespace, gwKind)
+		gatewayKeys = append(gatewayKeys, key)
+	}
+	return hostnames, gatewayKeys, nil
+}
+
+func deleteHttpRouteResource(obj interface{}) {
+	i, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		log.Debug("Failed to cast to Unstructured, skipping...")
+		return
+	}
+	hostnames, gateways, err := getHttpRouteHostnamesAndGateways(i)
+	if err != nil {
+		log.Error("Failed to parse HttpRoute object")
+		return
+	}
+
+	lock()
+	for _, host := range hostnames {
+		delete(ingressMap, host)
+	}
+	unlock()
+
+	log.Info("HttpRoute deleted",
+		zap.String("name", i.GetName()),
+		zap.String("namespace", i.GetNamespace()),
+		zap.Strings("hostnames", hostnames),
+		zap.Strings("gateways", gateways),
+	)
+}
+
+func updateHttpRouteResource(obj interface{}) {
+	i, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		log.Debug("Failed to cast to Unstructured, skipping...")
+		return
+	}
+	hostnames, gateways, err := getHttpRouteHostnamesAndGateways(i)
+	if err != nil {
+		log.Error("Failed to parse HttpRoute object")
+		return
+	}
+
+	for _, key := range gateways {
+		gatewayIpAddress, ok := gatewayMap[key]
+		if !ok {
+			log.Warn("Gateway spec not found in cache", zap.String("key", key))
+			continue
+		}
+
+		lock()
+		for _, host := range hostnames {
+			ingressMap[host] = gatewayIpAddress
+		}
+		unlock()
+
+		log.Info("HttpRoute discovered",
+			zap.Strings("hostnames", hostnames),
+			zap.Strings("gateways", gateways),
 		)
 	}
-	log.Debug("Ingress deleted", zap.String("name", i.Name))
 }
 
-func updateIngressMap(obj interface{}) {
+func deleteIngressResource(obj interface{}) {
 	i, ok := obj.(*networkingv1.Ingress)
 	if !ok {
 		log.Debug("failed to cast to Ingress, skipping...")
@@ -219,19 +557,39 @@ func updateIngressMap(obj interface{}) {
 		return
 	}
 
+	lock()
+	for _, rule := range i.Spec.Rules {
+		delete(ingressMap, rule.Host)
+	}
+	unlock()
+
+	log.Info("Ingress deleted",
+		zap.String("name", i.Name),
+		zap.String("namespace", i.Namespace),
+	)
+}
+
+func updateIngressResource(obj interface{}) {
+	i, ok := obj.(*networkingv1.Ingress)
+	if !ok {
+		log.Debug("failed to cast to Ingress, skipping...")
+		return
+	}
+	if len(i.Status.LoadBalancer.Ingress) == 0 {
+		log.Debug("no LoadBalancer.Ingress, skipping...", zap.String("name", i.Name))
+		return
+	}
+
+	lock()
 	ip := i.Status.LoadBalancer.Ingress[0].IP
 	for _, rule := range i.Spec.Rules {
 		ingressMap[rule.Host] = ip
-		log.Debug("Host discovered",
+		log.Info("Ingress rule discovered",
 			zap.String("host", rule.Host),
 			zap.String("ip", ip),
 		)
 	}
-	log.Info("Ingress loaded",
-		zap.String("name", i.Name),
-		zap.String("namespace", i.Namespace),
-		zap.String("load balancer", ip),
-	)
+	unlock()
 }
 
 func handleHttpRequest(w http.ResponseWriter, r *http.Request) {
@@ -279,9 +637,7 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	log.Debug("Not an Ingress host",
-		zap.String("host", r.Question[0].Name),
-	)
+	log.Debug("Not an Ingress host, forwarding request", zap.String("host", r.Question[0].Name))
 	forwardDnsRequest(w, r)
 }
 

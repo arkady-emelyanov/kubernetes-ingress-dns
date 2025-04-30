@@ -44,6 +44,9 @@ spec:
             - "-upstreams={{ .Values.service.upstreams }}"
           {{- if .Values.debug }}
             - "-debug"
+          {{- end }}     
+          {{- if .Values.features.gatewayApi }}
+            - "-enable-gateway-api"
           {{- end }}
           ports:
             - name: dns
